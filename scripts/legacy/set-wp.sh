@@ -14,7 +14,7 @@ fi
 pkill -f linux-wallpaperengine
 
 # 2. Ejecutar el nuevo fondo en segundo plano y silenciar la terminal
-linux-wallpaperengine --screen-root DP-1 --profile=balanced --audio-support --assets-dir "$ASSETS" "$BASE_PATH/$1" > /dev/null 2>&1 &
+linux-wallpaperengine --screen-root DP-0 --profile=balanced --audio-support --assets-dir "$ASSETS" "$BASE_PATH/$1" > /dev/null 2>&1 &
 
 disown
 echo "Cambiado al wallpaper: $1"
