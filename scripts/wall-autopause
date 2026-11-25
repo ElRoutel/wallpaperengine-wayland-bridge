@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# wall-autopause: pausa el fondo animado (mpvpaper / Wallpaper Engine) cuando el workspace visible
+# tiene ventanas, y lo reanuda cuando queda vacío.
+#
+#   wall-autopause            servicio: escucha los eventos de Hyprland (para el autostart)
+#   wall-autopause --apply    revisa una vez y aplica (lo usa set-wall al cambiar de fondo)
+#   wall-autopause --status   muestra si hoy debería estar pausado
+#
+# Por qué: con un fondo en movimiento Hyprland recalcula el blur de todo lo translúcido en cada
+# fotograma (~+26 W medidos en la RTX 2080). Con ventanas encima casi no se ve, así que se pausa.
+set -uo pipefail
+
+RUN="${XDG_RUNTIME_DIR:-/tmp}"
+MPV_SOCK="$RUN/set-wall-mpv.sock"
+STATE="$RUN/wall-autopause.state"     # "paused" | "playing"
+
+# ¿Todas las pantallas muestran un workspace con ventanas? (con un solo monitor: ¿el workspace activo tiene ventanas?)
+should_pause() {
+    local ids busy
+    ids=$(hyprctl monitors -j 2>/dev/null | jq -r '.[].activeWorkspace.id') || return 1
+    [ -n "$ids" ] || return 1
+    busy=$(hyprctl workspaces -j 2>/dev/null | jq --argjson ids "[$(echo $ids | tr ' ' ',')]" \
+        '[.[] | select(.id as $i | $ids | index($i)) | .windows] | all(. > 0)')
+    [ "$busy" = true ]
+}
+
+mpv_pause() { # mpv_pause true|false
+    [ -S "$MPV_SOCK" ] || return 0
+    printf '{"command":["set_property","pause",%s]}\n' "$1" | socat -t 1 - "UNIX-CONNECT:$MPV_SOCK" >/dev/null 2>&1
+}
+
+wpe_signal() { # wpe_signal STOP|CONT
+    local p
+    for p in $(pgrep -x linux-wallpaper); do kill -"$1" "$p" 2>/dev/null; done
+}
+
+apply() {
+    local want
+    if should_pause; then want=paused; else want=playing; fi
+    # mpv/WPE recién lanzados arrancan reproduciendo: con --apply siempre se reenvía el estado
+    [ "${FORCE:-0}" = 1 ] || [ "$(cat "$STATE" 2>/dev/null)" != "$want" ] || return 0
+    if [ "$want" = paused ]; then mpv_pause true; wpe_signal STOP
+    else mpv_pause false; wpe_signal CONT; fi
+    printf '%s\n' "$want" > "$STATE"
+}
+
+case "${1:-}" in
+    --apply)  FORCE=1 apply; exit 0 ;;
+    --status) should_pause && echo "pausar (hay ventanas)" || echo "reproducir (escritorio vacío)"; exit 0 ;;
+esac
+
+# servicio: una sola instancia
+exec 9>"$RUN/wall-autopause.lock"
+flock -n 9 || { echo "wall-autopause ya está corriendo" >&2; exit 0; }
+
+SOCK2="$RUN/hypr/${HYPRLAND_INSTANCE_SIGNATURE:?no estoy dentro de Hyprland}/.socket2.sock"
+FORCE=1 apply
+# si Hyprland se reinicia, el socket se cierra: salir y dejar que el autostart lo vuelva a lanzar
+socat -U - "UNIX-CONNECT:$SOCK2" | while IFS= read -r ev; do
+    case "${ev%%>>*}" in
+        openwindow|closewindow|movewindow|movewindowv2|workspace|workspacev2|focusedmon|focusedmonv2|monitoradded|monitorremoved|destroyworkspace)
+            sleep 0.15; apply ;;   # closewindow llega antes de que Hyprland actualice el conteo
+    esac
+done

@@ -1,30 +1,70 @@
 # 🌌 Wallpaper Engine Wayland Bridge
-A bridge to run Wallpaper Engine scenes on Wayland (Hyprland/Sway) with **Audio Reactive** support.
 
-This project uses `linux-wallpaperengine` to render Steam Workshop wallpapers as your background.
+Fondos de pantalla de **Wallpaper Engine** (Steam Workshop), videos e imágenes en **Hyprland / Wayland**, con un solo comando, restauración al iniciar sesión, pausa automática para ahorrar GPU y un selector gráfico con miniaturas.
 
-## ✨ Features
-- **Audio Reactive:** Wallpapers respond to system audio.
-- **Wayland Ready:** Configured for modern composers.
-- **Steam Integration:** Automatically points to your Steam Workshop library.
+Usa [`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine) para las escenas, `mpvpaper` para los videos y `awww` para las imágenes fijas.
 
-## 🛠️ Requirements
-1. **Wallpaper Engine** installed on Steam.
-2. **linux-wallpaperengine** (Build from source or install via AUR/Copr).
-3. **Steam Workshop IDs** of your favorite wallpapers.
+## ✨ Qué incluye
 
-## 🚀 Usage
-Run the script providing the Wallpaper ID from the Workshop:
+| Archivo | Qué hace |
+| :--- | :--- |
+| `scripts/set-wall` | Pone cualquier fondo: ID del Workshop, video o imagen. Guarda el último para restaurarlo al iniciar. |
+| `scripts/wall-autopause` | Pausa el fondo animado cuando el workspace visible tiene ventanas y lo reanuda al quedar vacío (~26-29 W menos en una RTX 2080). |
+| `scripts/wall-picker` | Selector gráfico (rofi) con miniaturas de todos tus wallpapers. Tema "Vidrio adaptativo": el color de acento sale del fondo actual. |
+| `rofi/wallpicker.rasi` | Tema de rofi del selector (cuadrícula 4×3, vidrio translúcido). |
+| `hypr/autostart.lua` | Fragmento para `hyprland.lua`: autostart + atajo `Super+Shift+W`. |
+| `scripts/legacy/set-wp.sh` | Script original (v1), conservado como referencia. |
+
+## 🛠️ Requisitos
+
+- **Wallpaper Engine** comprado e instalado en Steam (aporta los assets y el Workshop).
+- `linux-wallpaperengine`, `awww` (con `awww-daemon`), `mpvpaper`
+- `jq`, `ffmpeg`, `imagemagick` (`magick`), `socat`, `rofi` (>= 2.0, Wayland), `libnotify`
+- Hyprland (usa `hyprctl` y su socket de eventos)
+
+Rutas que asumen los scripts (cámbialas al inicio de cada script si usas otras):
+- Workshop: `~/.local/share/Steam/steamapps/workshop/content/431960`
+- Assets: `~/.local/share/Steam/steamapps/common/wallpaper_engine/assets`
+- Imágenes/videos locales para el selector: `~/Pictures/wallpapers` y `~/Pictures/Wallpapers`
+
+## 🚀 Instalación
+
 ```bash
-./scripts/set-wp.sh 2110291414
+git clone https://github.com/ElRoutel/wallpaperengine-wayland-bridge.git
+cd wallpaperengine-wayland-bridge
+./install.sh
 ```
 
-## 📝 Script Breakdown
-The script performs the following:
-- Kills previous instances to save resources.
-- Sets the profile to `balanced` for performance.
-- Enables `--audio-support` for reactive effects.
-- Directs output to the root of your primary monitor (`DP-1`).
+Copia los scripts a `~/.local/bin` y el tema a `~/.config/rofi` (respalda lo que ya exista). Después agrega a tu `hyprland.lua` lo que hay en `hypr/autostart.lua`.
 
-## ⚠️ Limitations
-This is a partial integration. Not all complex scenes are 100% compatible with the Linux port, but audio reactivity works perfectly for supported scenes.
+## 🎛️ Uso
+
+```bash
+set-wall 1348279970          # escena o video del Workshop por ID
+set-wall 1753984965 --audio  # escena reactiva al audio (por defecto va en --silent)
+set-wall --fps 60 <ID>       # fps de la escena (por defecto 30)
+set-wall ~/Videos/fondo.mp4  # video local (mpvpaper)
+set-wall ~/Pictures/foto.jpg # imagen fija (awww)
+set-wall --list              # lista ID, tipo y título de todo el Workshop
+set-wall --restore           # vuelve a aplicar el último (para el autostart)
+set-wall --stop              # detiene la animación (queda la imagen fija)
+
+wall-picker                  # selector gráfico (o Super+Shift+W)
+wall-autopause --status      # ¿debería estar pausado ahora?
+```
+
+En el selector: **Enter** aplica, **Alt+Enter** aplica con audio reactivo, **Esc** cierra. El wallpaper actual aparece marcado.
+
+## ⚙️ Cómo funciona
+
+1. **`set-wall` siempre deja una imagen fija con `awww` debajo** del fondo animado: un fotograma del video, la captura que hace Wallpaper Engine a los 60 s, o mientras tanto la preview del Workshop. Así otras herramientas que leen el fondo con `awww query` (lockscreens, shells con efecto vidrio) siempre tienen imagen, y si el fondo animado se cae no queda negro.
+2. **El estado** se guarda en `~/.config/set-wall/current` (`objetivo<TAB>audio<TAB>fps`). `set-wall --restore` lo lee al iniciar sesión y espera a que Hyprland tenga monitores.
+3. **Escenas** → `linux-wallpaperengine`; **videos del Workshop o locales** → `mpvpaper` (mucho más ligero). Los wallpapers tipo **web** no funcionan en `linux-wallpaperengine` y se rechazan.
+4. **`wall-autopause`** escucha los eventos de Hyprland (`.socket2.sock`). Pausa mpv por IPC y Wallpaper Engine con `SIGSTOP`/`SIGCONT`.
+5. **`wall-picker`** lee los `project.json` del Workshop, genera miniaturas 16:9 en `~/.cache/set-wall/thumbs` (en paralelo, solo la primera vez) y llama a `set-wall`.
+
+## ⚠️ Limitaciones
+
+- No todas las escenas complejas son 100% compatibles con el port de Linux.
+- Los wallpapers web no están soportados.
+- Pensado para un monitor; con varios usa el que tiene el foco.

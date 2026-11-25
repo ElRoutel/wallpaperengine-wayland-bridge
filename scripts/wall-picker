@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# wall-picker: lanzador gráfico (rofi) para set-wall, con miniaturas.
+#
+#   Enter       aplica el wallpaper
+#   Alt+Enter   aplica con audio reactivo (--audio, solo escenas de Wallpaper Engine)
+#   Esc         cierra sin cambiar nada
+#
+# Tema: "Vidrio adaptativo" — el color de acento (borde, selección, prompt) se toma del wallpaper
+# que está puesto, así el selector siempre combina con el fondo.
+#
+# Muestra: escenas y videos del Workshop de Wallpaper Engine (los "web" se ocultan porque
+# linux-wallpaperengine no los soporta) + imágenes/videos de ~/Pictures/wallpapers y ~/Pictures/Wallpapers.
+set -uo pipefail
+
+WS="$HOME/.local/share/Steam/steamapps/workshop/content/431960"
+LOCAL_DIRS=("$HOME/Pictures/wallpapers" "$HOME/Pictures/Wallpapers")
+THUMBS="$HOME/.cache/set-wall/thumbs"
+STATE="$HOME/.config/set-wall/current"
+THEME="$HOME/.config/rofi/wallpicker.rasi"
+mkdir -p "$THUMBS"
+
+# Si ya está abierto, cerrarlo (el atajo funciona como toggle)
+for p in $(pgrep -x rofi); do
+    if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "wallpicker.rasi"; then kill "$p"; exit 0; fi
+done
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# thumb <fuente> <destino>: miniatura 16:9 (primer frame si es GIF o video)
+thumb() {
+    local src="$1" out="$2"
+    [ -s "$out" ] && return 0
+    case "$(lower "$src")" in
+        *.mp4|*.webm|*.mkv|*.mov|*.m4v)
+            ffmpeg -loglevel error -y -ss 1 -i "$src" -frames:v 1 -vf "scale=384:216:force_original_aspect_ratio=increase,crop=384:216" "$out" </dev/null 2>/dev/null ;;
+        *)
+            magick "${src}[0]" -thumbnail 384x216^ -gravity center -extent 384x216 "$out" 2>/dev/null ;;
+    esac
+}
+export -f thumb lower
+
+TITLES=(); TARGETS=(); ICONS=(); JOBS=()
+current=""; [ -f "$STATE" ] && current=$(cut -f1 "$STATE")
+
+# ── Workshop ──────────────────────────────────────────────────────────────────
+if [ -d "$WS" ]; then
+    while IFS=$'\t' read -r id type title; do
+        [ "$type" = scene ] || [ "$type" = video ] || continue
+        prev=$(ls "$WS/$id"/preview.* 2>/dev/null | head -n1)
+        icon="$THUMBS/$id.jpg"
+        [ -n "$prev" ] && JOBS+=("$prev"$'\t'"$icon")
+        tag="󰸉"; [ "$type" = video ] && tag="󰕧"
+        TITLES+=("$tag  $title"); TARGETS+=("$id"); ICONS+=("$icon")
+    done < <(for d in "$WS"/*/; do
+                 id=$(basename "$d")
+                 jq -r --arg id "$id" '"\($id)\t\((.type // "")|ascii_downcase)\t\(.title // $id)"' "$d/project.json" 2>/dev/null
+             done | sort -t$'\t' -k3,3f)
+fi
+
+# ── Imágenes y videos locales ─────────────────────────────────────────────────
+for dir in "${LOCAL_DIRS[@]}"; do
+    [ -d "$dir" ] || continue
+    while IFS= read -r -d '' f; do
+        icon="$THUMBS/local-$(printf '%s' "$f" | md5sum | cut -c1-16).jpg"
+        JOBS+=("$f"$'\t'"$icon")
+        tag="󰋩"; case "$(lower "$f")" in *.mp4|*.webm|*.mkv|*.mov|*.m4v) tag="󰕧";; esac
+        name=$(basename "${f%.*}")
+        TITLES+=("$tag  $name"); TARGETS+=("$f"); ICONS+=("$icon")
+    done < <(find "$dir" -maxdepth 2 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' \
+                 -o -iname '*.mp4' -o -iname '*.webm' -o -iname '*.mkv' -o -iname '*.mov' -o -iname '*.m4v' \) -print0 | sort -z)
+done
+
+[ ${#TARGETS[@]} -gt 0 ] || { notify-send "wall-picker" "No encontré wallpapers"; exit 1; }
+
+# Generar miniaturas que falten (en paralelo; solo la primera vez tarda)
+missing=0
+for j in "${JOBS[@]}"; do [ -s "${j#*$'\t'}" ] || missing=$((missing + 1)); done
+if [ "$missing" -gt 0 ]; then
+    notify-send -t 3000 "wall-picker" "Generando $missing miniaturas…" 2>/dev/null
+    printf '%s\n' "${JOBS[@]}" | xargs -P "$(nproc)" -d '\n' -I{} bash -c 'IFS=$'"'"'\t'"'"' read -r s o <<< "$1"; thumb "$s" "$o"' _ {}
+fi
+
+# Marcar el actual
+active=""
+for i in "${!TARGETS[@]}"; do
+    t="${TARGETS[$i]}"
+    [ "$t" = "$current" ] && active="$i"
+done
+
+# ── Tema "Vidrio adaptativo": el acento sale del wallpaper actual ─────────────
+accent() { # "R,G,B": tono más vivo del wallpaper, con brillo ajustado para destacar sobre vidrio oscuro
+    magick "$1" -resize 64x36 -colors 10 -depth 8 -format %c histogram:info:- 2>/dev/null | awk '
+    function hsv2rgb(h,s,v,  i,f,p,q,t,r,g,b){ i=int(h*6); f=h*6-i; p=v*(1-s); q=v*(1-f*s); t=v*(1-(1-f)*s); i=i%6
+        if(i==0){r=v;g=t;b=p} else if(i==1){r=q;g=v;b=p} else if(i==2){r=p;g=v;b=t}
+        else if(i==3){r=p;g=q;b=v} else if(i==4){r=t;g=p;b=v} else {r=v;g=p;b=q}
+        return int(r*255)","int(g*255)","int(b*255) }
+    { if (match($0, /\(([0-9.]+),([0-9.]+),([0-9.]+)/, m)) {
+        n=$1+0; r=m[1]/255; g=m[2]/255; b=m[3]/255
+        mx=r; if(g>mx)mx=g; if(b>mx)mx=b; mn=r; if(g<mn)mn=g; if(b<mn)mn=b
+        s=(mx>0)?(mx-mn)/mx:0; d=mx-mn
+        if (d==0) h=0; else if (mx==r) h=((g-b)/d)%6; else if (mx==g) h=(b-r)/d+2; else h=(r-g)/d+4
+        h=h/6; if (h<0) h+=1
+        score=s*s*sqrt(n)*(mx>0.12?1:0.05)
+        if (score>best){best=score; H=h; S=s}
+    } }
+    END {
+        if (best=="" || S<0.18) { print "215,222,235"; exit }   # wallpaper casi gris → blanco suave
+        if (S>0.75) S=0.75; if (S<0.45) S=0.45
+        print hsv2rgb(H,S,0.95)
+    }'
+}
+
+ACCENT="215,222,235"
+if [ -n "$active" ] && [ -s "${ICONS[$active]}" ]; then
+    ACCENT=$(accent "${ICONS[$active]}")
+elif command -v awww >/dev/null; then
+    img=$(awww query 2>/dev/null | sed -n 's/.*image: //p' | head -n1)
+    [ -f "$img" ] && ACCENT=$(accent "$img")
+fi
+THEME_STR="* { acento: rgba($ACCENT, 1); borde-activo: rgba($ACCENT, 0.85); bg-vidrio-activo: rgba($ACCENT, 0.22); borde-sutil: rgba($ACCENT, 0.25); }"
+
+choice=$(for i in "${!TITLES[@]}"; do
+             printf '%s\0icon\x1f%s\n' "${TITLES[$i]}" "${ICONS[$i]}"
+         done | rofi -dmenu -i -show-icons -format i -p "󰸉 Wallpaper" \
+                     -theme "$THEME" -theme-str "$THEME_STR" ${active:+-a "$active" -selected-row "$active"} \
+                     -kb-custom-1 "Alt+Return" \
+                     -mesg "Enter: aplicar   ·   Alt+Enter: con audio reactivo")
+rc=$?
+
+[ -n "$choice" ] || exit 0
+target="${TARGETS[$choice]}"
+
+args=()
+[ "$rc" -eq 10 ] && args+=(--audio)
+case $rc in 0|10) ;; *) exit 0 ;; esac
+
+if "$HOME/.local/bin/set-wall" "${args[@]}" "$target"; then
+    notify-send -t 2500 -i "${ICONS[$choice]}" "Wallpaper" "${TITLES[$choice]#*  }" 2>/dev/null
+else
+    notify-send -u critical "wall-picker" "set-wall falló con ${TITLES[$choice]#*  }" 2>/dev/null
+fi

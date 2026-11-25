@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# set-wall: one wallpaper command for images, videos and Wallpaper Engine.
+#
+#   set-wall <imagen>                 foto fija (awww)
+#   set-wall <video.mp4|webm|mkv>     video (mpvpaper, mucho más barato que WPE para videos)
+#   set-wall <ID del Workshop>        Wallpaper Engine: scene → linux-wallpaperengine, video → mpvpaper
+#        --audio                      escena reactiva al audio (por defecto: --silent)
+#        --fps N                      fps de la escena (por defecto 30)
+#   set-wall --restore                vuelve a aplicar el último (para el autostart)
+#   set-wall --list                   lista los wallpapers del Workshop (ID, tipo, título)
+#   set-wall --stop                   detiene WPE / mpvpaper (deja la imagen fija)
+#
+# Siempre deja un fotograma fijo puesto con awww DEBAJO del fondo animado:
+#   - MacShell (vidrio) y MacLock (pantalla de bloqueo) leen el fondo con `awww query`
+#   - si WPE / mpvpaper se caen, queda esa imagen en lugar de un fondo vacío
+set -uo pipefail
+
+WS="$HOME/.local/share/Steam/steamapps/workshop/content/431960"
+ASSETS="$HOME/.local/share/Steam/steamapps/common/wallpaper_engine/assets"
+STATE="$HOME/.config/set-wall/current"
+CACHE="$HOME/.cache/set-wall"
+mkdir -p "$(dirname "$STATE")" "$CACHE"
+
+die() { printf 'set-wall: %s\n' "$*" >&2; exit 1; }
+monitor() { hyprctl monitors -j 2>/dev/null | jq -r '([.[] | select(.focused)][0] // .[0]).name'; }
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+is_video() { case "$(lower "$1")" in *.mp4|*.webm|*.mkv|*.mov|*.m4v) return 0;; esac; return 1; }
+key_of() { printf '%s:%s' "$1" "$(stat -c %Y "$1" 2>/dev/null)" | md5sum | cut -c1-16; }
+
+stop_anim() {
+    pkill -x linux-wallpaper 2>/dev/null   # comm is truncated to 15 chars
+    pkill -x mpvpaper 2>/dev/null
+    for _ in $(seq 20); do pgrep -x linux-wallpaper >/dev/null || pgrep -x mpvpaper >/dev/null || return 0; sleep 0.1; done
+    pkill -KILL -x linux-wallpaper 2>/dev/null; pkill -KILL -x mpvpaper 2>/dev/null; return 0
+}
+
+still() { # still <image>: put a still frame under everything
+    pgrep -x awww-daemon >/dev/null || { setsid awww-daemon >/dev/null 2>&1 & }
+    for _ in $(seq 30); do awww query >/dev/null 2>&1 && break; sleep 0.1; done
+    awww img "$1" --transition-type fade --transition-duration 0.6 >/dev/null 2>&1 \
+        || awww img "$1" --transition-type none >/dev/null 2>&1
+}
+
+video_frame() { # video_frame <video> → prints a cached PNG frame
+    local out="$CACHE/$(key_of "$1").png"
+    [ -s "$out" ] || ffmpeg -loglevel error -y -ss 1 -i "$1" -frames:v 1 "$out" </dev/null \
+        || ffmpeg -loglevel error -y -i "$1" -frames:v 1 "$out" </dev/null
+    printf '%s' "$out"
+}
+
+play_video() { # play_video <video>
+    local mon; mon=$(monitor)
+    still "$(video_frame "$1")"
+    setsid mpvpaper -o "no-audio loop-file=inf hwdec=auto panscan=1.0 profile=fast framedrop=vo input-ipc-server=${XDG_RUNTIME_DIR:-/tmp}/set-wall-mpv.sock" "$mon" "$1" >/dev/null 2>&1 &
+}
+
+play_scene() { # play_scene <dir> <id>
+    local dir="$1" id="$2" mon frame prev args
+    command -v linux-wallpaperengine >/dev/null || die "linux-wallpaperengine no está instalado"
+    mon=$(monitor)
+    frame="$CACHE/wpe-$id.png"
+    if [ -s "$frame" ]; then
+        still "$frame"
+    else
+        # until WPE writes its own frame, the Workshop preview stands in (first frame if it is a GIF)
+        prev=$(ls "$dir"/preview.* 2>/dev/null | head -n1)
+        if [ -n "$prev" ]; then magick "${prev}[0]" -resize 1920x1080^ -gravity center -extent 1920x1080 "$CACHE/prev-$id.png" 2>/dev/null \
+            && still "$CACHE/prev-$id.png"; fi
+    fi
+    args=(--screen-root "$mon" --bg "$dir" --fps "$FPS" --assets-dir "$ASSETS")
+    [ "$AUDIO" = 1 ] || args+=(--silent)
+    [ -s "$frame" ] || args+=(--screenshot "$frame" --screenshot-delay 60)
+    setsid linux-wallpaperengine "${args[@]}" >/dev/null 2>&1 &
+    if [ ! -s "$frame" ]; then
+        # once the frame exists, swap the still underneath to it (runs in the background)
+        ( for _ in $(seq 60); do [ -s "$frame" ] && { sleep 0.5; still "$frame"; exit 0; }; sleep 0.5; done ) &
+    fi
+}
+
+apply() { # apply <target>
+    local t="$1" dir type
+    if [[ "$t" =~ ^[0-9]+$ ]]; then
+        dir="$WS/$t"; [ -f "$dir/project.json" ] || die "no encuentro el wallpaper $t en el Workshop"
+        type=$(lower "$(jq -r '.type // ""' "$dir/project.json")")
+        case "$type" in
+            scene) stop_anim; play_scene "$dir" "$t" ;;
+            video) stop_anim; play_video "$dir/$(jq -r '.file' "$dir/project.json")" ;;
+            web)   die "los wallpapers web no funcionan en linux-wallpaperengine r643 (se cierran); elige una escena o video" ;;
+            *)     die "tipo desconocido: $type" ;;
+        esac
+    elif [ -f "$t" ] && is_video "$t"; then
+        stop_anim; play_video "$(realpath "$t")"
+    elif [ -f "$t" ]; then
+        stop_anim; still "$(realpath "$t")"
+    else
+        die "no existe: $t"
+    fi
+    [[ "$t" =~ ^[0-9]+$ ]] || t=$(realpath "$t")
+    printf '%s\t%s\t%s\n' "$t" "$AUDIO" "$FPS" > "$STATE"
+}
+
+AUDIO=0; FPS=30; TARGET=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --audio) AUDIO=1 ;;
+        --fps) shift; FPS="${1:-30}" ;;
+        --stop) stop_anim; exit 0 ;;
+        --list)
+            for d in "$WS"/*/; do id=$(basename "$d")
+                jq -r --arg id "$id" '"\($id)\t\(.type|ascii_downcase)\t\(.title)"' "$d/project.json" 2>/dev/null; done | column -t -s $'\t'
+            exit 0 ;;
+        --restore)
+            [ -f "$STATE" ] || exit 0
+            IFS=$'\t' read -r TARGET AUDIO FPS < "$STATE"
+            # Hyprland may still be bringing outputs up at login
+            for _ in $(seq 50); do [ -n "$(monitor)" ] && [ "$(monitor)" != null ] && break; sleep 0.2; done ;;
+        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) TARGET="$1" ;;
+    esac
+    shift
+done
+[ -n "$TARGET" ] || { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+apply "$TARGET"
+# aplica de inmediato la pausa automática (si hay ventanas abiertas, el fondo nuevo arranca pausado)
+command -v wall-autopause >/dev/null && { sleep 1.5; wall-autopause --apply; } >/dev/null 2>&1 &
