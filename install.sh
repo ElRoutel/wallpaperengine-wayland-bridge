@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Instala set-wall, wall-autopause y wall-picker en ~/.local/bin y el tema de rofi.
-# Los archivos existentes se respaldan con sufijo .bak-<fecha>.
+# Enlaza set-wall, wall-autopause y wall-picker en ~/.local/bin y el tema de rofi en ~/.config/rofi.
+# Son enlaces simbólicos al repo: lo que edites queda listo para commit y push.
+# Lo que ya exista (y no sea el enlace correcto) se respalda con sufijo .bak-<fecha>.
 set -euo pipefail
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 BIN="$HOME/.local/bin"; ROFI="${XDG_CONFIG_HOME:-$HOME/.config}/rofi"
 STAMP=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BIN" "$ROFI"
 
 put() { # put <src> <dest>
-    if [ -e "$2" ] && ! cmp -s "$1" "$2"; then cp -a "$2" "$2.bak-$STAMP"; echo "  respaldo: $2.bak-$STAMP"; fi
-    install -m "${3:-644}" "$1" "$2"; echo "  instalado: $2"
+    if [ -L "$2" ] && [ "$(readlink -f "$2")" = "$(readlink -f "$1")" ]; then echo "  ok: $2"; return; fi
+    if [ -e "$2" ] || [ -L "$2" ]; then mv "$2" "$2.bak-$STAMP"; echo "  respaldo: $2.bak-$STAMP"; fi
+    ln -s "$1" "$2"; echo "  enlazado: $2 ⇒ $1"
 }
-for s in set-wall wall-autopause wall-picker; do put "$REPO/scripts/$s" "$BIN/$s" 755; done
+chmod +x "$REPO"/scripts/set-wall "$REPO"/scripts/wall-autopause "$REPO"/scripts/wall-picker
+for s in set-wall wall-autopause wall-picker; do put "$REPO/scripts/$s" "$BIN/$s"; done
 put "$REPO/rofi/wallpicker.rasi" "$ROFI/wallpicker.rasi"
 
 missing=()

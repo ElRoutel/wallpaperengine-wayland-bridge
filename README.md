@@ -35,7 +35,7 @@ cd wallpaperengine-wayland-bridge
 ./install.sh
 ```
 
-Copia los scripts a `~/.local/bin` y el tema a `~/.config/rofi` (respalda lo que ya exista). Después agrega a tu `hyprland.lua` lo que hay en `hypr/autostart.lua`.
+Enlaza los scripts en `~/.local/bin` y el tema en `~/.config/rofi` (enlaces simbólicos al repo; respalda lo que ya exista con sufijo `.bak-<fecha>`). Después agrega a tu `hyprland.lua` lo que hay en `hypr/autostart.lua`.
 
 ## 🎛️ Uso
 
