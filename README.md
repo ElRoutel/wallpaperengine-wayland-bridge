@@ -42,26 +42,33 @@ Enlaza los scripts en `~/.local/bin` y el tema en `~/.config/rofi` (enlaces simb
 ```bash
 set-wall 1348279970          # escena o video del Workshop por ID
 set-wall 1753984965 --audio  # escena reactiva al audio (por defecto va en --silent)
-set-wall --fps 60 <ID>       # fps de la escena (por defecto 30)
+set-wall --fps 60 <ID>       # fps de escenas (por defecto 30) y videos (por defecto los del archivo)
+set-wall --props <ID>        # opciones de una escena (colores, sliders...) y las que tienes guardadas
+set-wall --prop schemecolor="1 0 0"   # cambia una opción del wallpaper actual; se guarda para ese ID
+set-wall --prop bloom=false <ID>      # lo mismo para otro wallpaper (lo aplica)
+set-wall --prop schemecolor=          # quita una opción guardada
+set-wall --reset-props [ID]  # borra todas las opciones guardadas
 set-wall ~/Videos/fondo.mp4  # video local (mpvpaper)
 set-wall ~/Pictures/foto.jpg # imagen fija (awww)
 set-wall --list              # lista ID, tipo y título de todo el Workshop
 set-wall --restore           # vuelve a aplicar el último (para el autostart)
 set-wall --stop              # detiene la animación (queda la imagen fija)
+set-wall --subscribed        # IDs a los que sigues suscrito en Steam
+set-wall --prune             # borra del disco los wallpapers a los que te desuscribiste (pide confirmación; -y para no preguntar)
 
 wall-picker                  # selector gráfico (o Super+Shift+W)
 wall-autopause --status      # ¿debería estar pausado ahora?
 ```
 
-En el selector: **Enter** aplica, **Alt+Enter** aplica con audio reactivo, **Esc** cierra. El wallpaper actual aparece marcado.
+En el selector: **Enter** aplica, **Alt+Enter** aplica con audio reactivo, **Alt+1/2/3** aplica a 15/30/60 fps, **Esc** cierra. El wallpaper actual aparece marcado.
 
 ## ⚙️ Cómo funciona
 
 1. **`set-wall` siempre deja una imagen fija con `awww` debajo** del fondo animado: un fotograma del video, la captura que hace Wallpaper Engine a los 60 s, o mientras tanto la preview del Workshop. Así otras herramientas que leen el fondo con `awww query` (lockscreens, shells con efecto vidrio) siempre tienen imagen, y si el fondo animado se cae no queda negro.
-2. **El estado** se guarda en `~/.config/set-wall/current` (`objetivo<TAB>audio<TAB>fps`). `set-wall --restore` lo lee al iniciar sesión y espera a que Hyprland tenga monitores.
+2. **El estado** se guarda en `~/.config/set-wall/current` (`objetivo<TAB>audio<TAB>fps`, fps `0` = por defecto) y las opciones de cada escena en `~/.config/set-wall/props/<ID>` (una línea `nombre=valor`, se pasan a `--set-property`). Limitar los fps de un video usa `vf=fps=N` con `hwdec=auto-copy`. `set-wall --restore` lo lee al iniciar sesión y espera a que Hyprland tenga monitores.
 3. **Escenas** → `linux-wallpaperengine`; **videos del Workshop o locales** → `mpvpaper` (mucho más ligero). Los wallpapers tipo **web** no funcionan en `linux-wallpaperengine` y se rechazan.
 4. **`wall-autopause`** escucha los eventos de Hyprland (`.socket2.sock`). Pausa mpv por IPC y Wallpaper Engine con `SIGSTOP`/`SIGCONT`.
-5. **`wall-picker`** lee los `project.json` del Workshop, genera miniaturas 16:9 en `~/.cache/set-wall/thumbs` (en paralelo, solo la primera vez) y llama a `set-wall`.
+5. **`wall-picker`** solo muestra los wallpapers a los que sigues suscrito (los que tienen `subscribedby` en `steamapps/workshop/appworkshop_431960.acf`), porque Steam no siempre borra la carpeta al desuscribirte; `WALLPICKER_ALL=1 wall-picker` muestra todos. Lee los `project.json` del Workshop, genera miniaturas 16:9 en `~/.cache/set-wall/thumbs` (en paralelo, solo la primera vez) y llama a `set-wall`.
 
 ## ⚠️ Limitaciones
 

@@ -3,6 +3,8 @@
 #
 #   Enter       aplica el wallpaper
 #   Alt+Enter   aplica con audio reactivo (--audio, solo escenas de Wallpaper Engine)
+#   Alt+1/2/3   aplica a 15 / 30 / 60 fps (escenas y videos)
+#   Las opciones guardadas con `set-wall --prop` se aplican solas.
 #   Esc         cierra sin cambiar nada
 #
 # Tema: "Vidrio adaptativo" — el color de acento (borde, selección, prompt) se toma del wallpaper
@@ -43,9 +45,18 @@ TITLES=(); TARGETS=(); ICONS=(); JOBS=()
 current=""; [ -f "$STATE" ] && current=$(cut -f1 "$STATE")
 
 # ── Workshop ──────────────────────────────────────────────────────────────────
+# Steam no siempre borra la carpeta al desuscribirte: solo se muestran los suscritos (set-wall --subscribed).
+# Para borrar los desuscritos del disco: set-wall --prune. Si el manifiesto falta o no se puede leer, se muestran todos.
+# WALLPICKER_ALL=1 wall-picker  → mostrar también los desuscritos.
+declare -A SUBS=()
+if [ "${WALLPICKER_ALL:-0}" != 1 ]; then
+    while read -r sid; do SUBS[$sid]=1; done < <("$HOME/.local/bin/set-wall" --subscribed 2>/dev/null)
+fi
+
 if [ -d "$WS" ]; then
     while IFS=$'\t' read -r id type title; do
         [ "$type" = scene ] || [ "$type" = video ] || continue
+        [ ${#SUBS[@]} -eq 0 ] || [ -n "${SUBS[$id]:-}" ] || continue
         prev=$(ls "$WS/$id"/preview.* 2>/dev/null | head -n1)
         icon="$THUMBS/$id.jpg"
         [ -n "$prev" ] && JOBS+=("$prev"$'\t'"$icon")
@@ -123,19 +134,25 @@ choice=$(for i in "${!TITLES[@]}"; do
              printf '%s\0icon\x1f%s\n' "${TITLES[$i]}" "${ICONS[$i]}"
          done | rofi -dmenu -i -show-icons -format i -p "󰸉 Wallpaper" \
                      -theme "$THEME" -theme-str "$THEME_STR" ${active:+-a "$active" -selected-row "$active"} \
-                     -kb-custom-1 "Alt+Return" \
-                     -mesg "Enter: aplicar   ·   Alt+Enter: con audio reactivo")
+                     -kb-custom-1 "Alt+Return" -kb-custom-2 "Alt+1" -kb-custom-3 "Alt+2" -kb-custom-4 "Alt+3" \
+                     -mesg "Enter: aplicar   ·   Alt+Enter: audio reactivo   ·   Alt+1/2/3: 15/30/60 fps")
 rc=$?
 
 [ -n "$choice" ] || exit 0
 target="${TARGETS[$choice]}"
 
-args=()
-[ "$rc" -eq 10 ] && args+=(--audio)
-case $rc in 0|10) ;; *) exit 0 ;; esac
+args=(); fps_msg=""
+case $rc in
+    0)  ;;
+    10) args+=(--audio) ;;
+    11) args+=(--fps 15); fps_msg=" · 15 fps" ;;
+    12) args+=(--fps 30); fps_msg=" · 30 fps" ;;
+    13) args+=(--fps 60); fps_msg=" · 60 fps" ;;
+    *)  exit 0 ;;
+esac
 
 if "$HOME/.local/bin/set-wall" "${args[@]}" "$target"; then
-    notify-send -t 2500 -i "${ICONS[$choice]}" "Wallpaper" "${TITLES[$choice]#*  }" 2>/dev/null
+    notify-send -t 2500 -i "${ICONS[$choice]}" "Wallpaper" "${TITLES[$choice]#*  }$fps_msg" 2>/dev/null
 else
     notify-send -u critical "wall-picker" "set-wall falló con ${TITLES[$choice]#*  }" 2>/dev/null
 fi
