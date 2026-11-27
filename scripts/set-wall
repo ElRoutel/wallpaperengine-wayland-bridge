@@ -84,8 +84,14 @@ still() { # still <image>: put a still frame under everything
     for _ in $(seq 30); do awww query >/dev/null 2>&1 && break; sleep 0.1; done
     awww img "$1" --transition-type fade --transition-duration 0.6 >/dev/null 2>&1 \
         || awww img "$1" --transition-type none >/dev/null 2>&1
+    sddm_sync "$1"
 }
 
+sddm_sync() { # local: copy the still to the MacLogin SDDM theme (the file is ours, so no sudo)
+    local dst=/usr/share/sddm/themes/MacLogin/wallpaper.jpg tmp="${XDG_RUNTIME_DIR:-/tmp}/maclogin-wall.jpg"
+    [ -w "$dst" ] || return 0
+    ( magick "${1}[0]" -resize '2560x1440>' -quality 90 "jpg:$tmp" 2>/dev/null && cat "$tmp" > "$dst"; rm -f "$tmp" ) &
+}
 
 video_frame() { # video_frame <video> → prints a cached PNG frame
     local out="$CACHE/$(key_of "$1").png"
